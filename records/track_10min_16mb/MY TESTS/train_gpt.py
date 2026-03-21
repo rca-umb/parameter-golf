@@ -423,6 +423,27 @@ def dequantize_state_dict_int8(obj: dict[str, object]) -> dict[str, Tensor]:
 
 
 # -----------------------------
+# QUANTIZATION-AWARE TRAINING -
+# -----------------------------
+def fake_quantize_per_row(x: Tensor) -> Tensor:
+    # Compute per-row scale the same way PTQ does
+    clip_abs = torch.quantile(x.float().abs(), INT8_CLIP_Q, dim=1)
+    scale = (clip_abs / 127.0).clamp_min(1.0 / 127.0)
+    
+    # Quantize: round to int8 values
+    x_scaled = x.float() / scale[:, None]
+    x_clipped = torch.clamp(x_scaled, -127, 127)
+    x_quantized = torch.round(x_clipped)
+    
+    # Dequantize: back to float, same dtype as input
+    x_dequant = (x_quantized * scale[:, None]).to(x.dtype)
+    
+    # Straight-through estimator: in the backward pass, pretend this
+    # operation was identity (gradient passes through unchanged)
+    return x + (x_dequant - x).detach()
+
+
+# -----------------------------
 # DATA LOADING 
 # -----------------------------
 
@@ -509,8 +530,11 @@ class RMSNorm(nn.Module):
 class CastedLinear(nn.Linear):
     # Keep weights in fp32 for optimizer/state quality, cast at matmul time for bf16 compute.
     def forward(self, x: Tensor) -> Tensor:
+        w = self.weight.to(x.dtype)
+        if w.ndim == 2 and w.numel() > INT8_KEEP_FLOAT_MAX_NUMEL:
+            w = fake_quantize_per_row(w)
         bias = self.bias.to(x.dtype) if self.bias is not None else None
-        return F.linear(x, self.weight.to(x.dtype), bias)
+        return F.linear(x, w, bias)
 
 
 def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
