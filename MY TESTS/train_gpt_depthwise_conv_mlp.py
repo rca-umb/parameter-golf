@@ -705,8 +705,9 @@ class GatedShortConvBlock(nn.Module):
         # Conv sublayer
         h = self.conv_norm(x)
         B, C, h = self.in_proj(h).chunk(3, dim=-1)
+        h = B*h # gating
         h = self.conv(h)
-        h = B * h * C
+        h = C*h # gating
         x = x + self.conv_scale.to(dtype=x.dtype)[None, None, :] * self.out_proj(h)
         # MLP sublayer
         x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x))

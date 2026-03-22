@@ -695,12 +695,15 @@ class GatedShortConvBlock(nn.Module):
     def forward(self, x: Tensor, x0: Tensor) -> Tensor:
         mix = self.resid_mix.to(dtype=x.dtype)
         x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
+        # Conv sublayer
         h = self.norm(x)
         B, C, h = self.in_proj(h).chunk(3, dim=-1)
-        h = self.conv(h) # Local position mixing
-        h = B * h * C # Double gate
-        out = self.out_proj(h)
-        return x + self.scale.to(dtype=x.dtype)[None, None, :] * out
+        h = B*h # gating
+        h = self.conv(h)
+        h = C*h # gating
+        x = x + self.scale.to(dtype=x.dtype)[None, None, :] * self.out_proj(h)
+        return x
+
 
 
 class GPT(nn.Module):
